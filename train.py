@@ -240,6 +240,7 @@ def train():
         else:
             model, optimizer = amp.initialize(model, optimizer, opt_level='O1', verbosity=1)
     # Initialize distributed training
+    # 设置分布式训练
     if torch.cuda.device_count() > 1:
         dist.init_process_group(backend='nccl',  # 'distributed backend'
                                 init_method='tcp://127.0.0.1:9999',  # distributed training init method
@@ -250,6 +251,7 @@ def train():
         model.yolo_layers = model.module.yolo_layers  # move yolo layer indices to top level
 
     # Dataset
+    # 加载数据
     dataset = LoadImagesAndLabels(train_path,
                                   img_size,
                                   batch_size,
@@ -268,17 +270,20 @@ def train():
                                              pin_memory=True,
                                              collate_fn=dataset.collate_fn)
 
-    for idx in prune_idx:
-        bn_weights = gather_bn_weights(model.module_list, [idx])
-        tb_writer.add_histogram('before_train_perlayer_bn_weights/hist', bn_weights.numpy(), idx, bins='doane')
+    # 获得需要剪枝的conv的BN层权重，gather_bn_weights获得
+    # add_histogram是利用tensorboard进行可视化
+    if opt.prune != -1:
+        for idx in prune_idx:
+            bn_weights = gather_bn_weights(model.module_list, [idx])
+            tb_writer.add_histogram('before_train_perlayer_bn_weights/hist', bn_weights.numpy(), idx, bins='doane')
 
     # Start training
-    model.nc = nc  # attach number of classes to model
+    model.nc = nc  # attach number of classes to model 类别数
     model.arc = opt.arc  # attach yolo architecture
     model.hyp = hyp  # attach hyperparameters to model
     # model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device)  # attach class weights
     torch_utils.model_info(model, report='summary')  # 'full' or 'summary'
-    nb = len(dataloader)
+    nb = len(dataloader) #一次dataloader长度
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # 'P', 'R', 'mAP', 'F1', 'val GIoU', 'val Objectness', 'val Classification'
     t0 = time.time()
@@ -374,7 +379,9 @@ def train():
             else:
                 loss.backward()
 
-            BNOptimizer.updateBN(sr_flag, model.module_list, opt.s, prune_idx, idx2mask)
+            # 稀疏化训练
+            if opt.prune != -1:
+                BNOptimizer.updateBN(sr_flag, model.module_list, opt.s, prune_idx, idx2mask)
 
             # Accumulate gradient for x batches before optimizing
             if ni % accumulate == 0:
@@ -456,14 +463,14 @@ def train():
                 torch.save(chkpt, wdir + 'backup%g.pt' % epoch)
 
             # Delete checkpoint
-            del chkpt            
+            del chkpt
 
 
         # end epoch ----------------------------------------------------------------------------------------------------
-
-    for idx in prune_idx:
-        bn_weights = gather_bn_weights(model.module_list, [idx])
-        tb_writer.add_histogram('after_train_perlayer_bn_weights/hist', bn_weights.numpy(), idx, bins='doane')
+    if opt.prune != -1:
+        for idx in prune_idx:
+            bn_weights = gather_bn_weights(model.module_list, [idx])
+            tb_writer.add_histogram('after_train_perlayer_bn_weights/hist', bn_weights.numpy(), idx, bins='doane')
 
     # end training
     if len(opt.name):
@@ -515,7 +522,7 @@ if __name__ == '__main__':
                         help='train with channel sparsity regularization')
     parser.add_argument('--s', type=float, default=0.001, help='scale sparse rate')
     parser.add_argument('--prune', type=int, default=1, help='0:nomal prune 1:other prune ')
-    
+
     opt = parser.parse_args()
     opt.weights = last if opt.resume else opt.weights
     print(opt)
