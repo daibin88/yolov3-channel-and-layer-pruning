@@ -44,7 +44,16 @@ def parse_module_defs(module_defs):
 
 
 def parse_module_defs2(module_defs):
-
+    ***
+    功能：根据module_defs将yolo的各层函数区分
+    函数含义如下：
+        CBL_idx：含有BN层的conv
+        Conv_idx：卷积中没有BN层的网络conv
+        shortcut_idx：为字典类型，表示两层要进行add操作，如3：1代表第3层卷积要和第1层卷积做add运算
+        shortcut_all：用于add的层，eg:yolov3-spp中[1,3,5,7,10,...,70,73]
+        ignore_idx:上采样层之前的卷积层，eg:yolov3-spp [91,77,103]
+        prune_idx:去除上采样层之前的卷积层的含有BN层的conv层
+    ***
     CBL_idx = []
     Conv_idx = []
     shortcut_idx=dict()
@@ -67,18 +76,18 @@ def parse_module_defs2(module_defs):
         elif module_def['type'] == 'shortcut':
             identity_idx = (i + int(module_def['from']))
             if module_defs[identity_idx]['type'] == 'convolutional':
-                
+
                 #ignore_idx.add(identity_idx)
                 shortcut_idx[i-1]=identity_idx
                 shortcut_all.add(identity_idx)
             elif module_defs[identity_idx]['type'] == 'shortcut':
-                
+
                 #ignore_idx.add(identity_idx - 1)
                 shortcut_idx[i-1]=identity_idx-1
                 shortcut_all.add(identity_idx-1)
             shortcut_all.add(i-1)
-        
-    
+
+
 
     prune_idx = [idx for idx in CBL_idx if idx not in ignore_idx]
 
@@ -140,7 +149,7 @@ class BNOptimizer():
     @staticmethod
     def updateBN(sr_flag, module_list, s, prune_idx, idx2mask=None):
         if sr_flag:
-            
+
             for idx in prune_idx:
                 # Squential(Conv, BN, Lrelu)
                 bn_module = module_list[idx][1]
@@ -314,7 +323,7 @@ def prune_model_keep_size2(model, prune_idx, CBL_idx, CBLidx2mask):
             activation = actv1 + actv2
             update_activation(i, pruned_model, activation, CBL_idx)
             activations.append(activation)
-            
+
 
 
         elif model_def['type'] == 'route':
@@ -340,7 +349,7 @@ def prune_model_keep_size2(model, prune_idx, CBL_idx, CBLidx2mask):
 
         elif model_def['type'] == 'maxpool':
             activations.append(None)
-       
+
     return pruned_model
 
 
@@ -357,13 +366,13 @@ def get_mask(model, prune_idx, shortcut_idx):
     idx_new=dict()
     #CBL_idx存储的是所有带BN的卷积层（YOLO层的前一层卷积层是不带BN的）
     for idx in prune_idx:
-        bn_module = model.module_list[idx][1]        
+        bn_module = model.module_list[idx][1]
         if idx not in shortcut_idx:
             mask = obtain_bn_mask(bn_module, torch.tensor(highest_thre)).cpu()
             idx_new[idx]=mask
         else:
             mask=idx_new[shortcut_idx[idx]]
-            idx_new[idx]=mask        
+            idx_new[idx]=mask
 
         filters_mask.append(mask.clone())
 
@@ -374,8 +383,8 @@ def get_mask(model, prune_idx, shortcut_idx):
 def merge_mask(model, CBLidx2mask, CBLidx2filters):
     for i in range(len(model.module_defs) - 1, -1, -1):
         mtype = model.module_defs[i]['type']
-        if mtype == 'shortcut': 
-            if model.module_defs[i]['is_access']: 
+        if mtype == 'shortcut':
+            if model.module_defs[i]['is_access']:
                 continue
 
             Merge_masks =  []
@@ -383,19 +392,19 @@ def merge_mask(model, CBLidx2mask, CBLidx2filters):
             while mtype == 'shortcut':
                 model.module_defs[layer_i]['is_access'] = True
 
-                if model.module_defs[layer_i-1]['type'] == 'convolutional': 
+                if model.module_defs[layer_i-1]['type'] == 'convolutional':
                     bn = int(model.module_defs[layer_i-1]['batch_normalize'])
-                    if bn: 
+                    if bn:
                         Merge_masks.append(CBLidx2mask[layer_i-1].unsqueeze(0))
 
-                layer_i = int(model.module_defs[layer_i]['from'])+layer_i 
+                layer_i = int(model.module_defs[layer_i]['from'])+layer_i
                 mtype = model.module_defs[layer_i]['type']
 
-                if mtype == 'convolutional':              
+                if mtype == 'convolutional':
                     bn = int(model.module_defs[layer_i]['batch_normalize'])
-                    if bn: 
+                    if bn:
                         Merge_masks.append(CBLidx2mask[layer_i].unsqueeze(0))
-                
+
 
             if len(Merge_masks) > 1:
                 Merge_masks = torch.cat(Merge_masks, 0)
@@ -407,17 +416,17 @@ def merge_mask(model, CBLidx2mask, CBLidx2filters):
             mtype = 'shortcut'
             while mtype == 'shortcut':
 
-                if model.module_defs[layer_i-1]['type'] == 'convolutional': 
+                if model.module_defs[layer_i-1]['type'] == 'convolutional':
                     bn = int(model.module_defs[layer_i-1]['batch_normalize'])
                     if bn:
                         CBLidx2mask[layer_i-1] = merge_mask
                         CBLidx2filters[layer_i-1] = int(torch.sum(merge_mask).item())
 
-                layer_i = int(model.module_defs[layer_i]['from'])+layer_i 
+                layer_i = int(model.module_defs[layer_i]['from'])+layer_i
                 mtype = model.module_defs[layer_i]['type']
 
-                if mtype == 'convolutional': 
+                if mtype == 'convolutional':
                     bn = int(model.module_defs[layer_i]['batch_normalize'])
-                    if bn:     
+                    if bn:
                         CBLidx2mask[layer_i] = merge_mask
                         CBLidx2filters[layer_i] = int(torch.sum(merge_mask).item())
