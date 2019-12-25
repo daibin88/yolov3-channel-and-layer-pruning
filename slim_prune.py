@@ -31,11 +31,13 @@ if __name__ == '__main__':
         _ = load_darknet_weights(model, opt.weights)
     print('\nloaded weights from ',opt.weights)
 
-
+    #eval_model测试模型，调用test函数
     eval_model = lambda model:test(model=model,cfg=opt.cfg, data=opt.data)
+    #obtain_num_parameters 获得模型的参数数量
     obtain_num_parameters = lambda model:sum([param.nelement() for param in model.parameters()])
 
     print("\nlet's test the original model first:")
+    # no_grad 不跟踪计算梯度
     with torch.no_grad():
         origin_model_metric = eval_model(model)
     origin_nparameters = obtain_num_parameters(model)
@@ -43,9 +45,10 @@ if __name__ == '__main__':
     CBL_idx, Conv_idx, prune_idx, _, _= parse_module_defs2(model.module_defs)
 
 
-
+    # 将BN层的权重系数得到，如某一层有32个卷积层，则有32个BN系数，待分析？？
     bn_weights = gather_bn_weights(model.module_list, prune_idx)
-
+    # 对bn_weights进行从小到大排序，根据global_percent计算bn阈值thresh
+    # sorted_index为bn的权重在未排序列表中的位置
     sorted_bn = torch.sort(bn_weights)[0]
     sorted_bn, sorted_index = torch.sort(bn_weights)
     thresh_index = int(len(bn_weights) * opt.global_percent)
@@ -57,7 +60,11 @@ if __name__ == '__main__':
 
 
     #%%
-    def obtain_filters_mask(model, thre, CBL_idx, prune_idx):
+    def obtain_filters_mask(model, thresh, CBL_idx, prune_idx):
+        '''
+        功能：根据thre值确定含有BN层的卷积中那些层需要剪去
+
+        '''
 
         pruned = 0
         total = 0
@@ -66,17 +73,21 @@ if __name__ == '__main__':
         for idx in CBL_idx:
             bn_module = model.module_list[idx][1]
             if idx in prune_idx:
-
+                #获得bn权重的绝对值存在weight_copy中
                 weight_copy = bn_module.weight.data.abs().clone()
-                
+                #channels为BN的权重个数，即卷积层的特征层数
                 channels = weight_copy.shape[0] #
+                #min_channel_num 表示某卷积层需要保留的最小feature map 层数，eg channels=32 则int(channels * opt.layer_keep)=0
+                #此时min_channel_num=1，即卷积中最少有一层的feature map输出
                 min_channel_num = int(channels * opt.layer_keep) if int(channels * opt.layer_keep) > 0 else 1
+                # mask BN权值大于thresh时 mask对应的值设为1，否则设为0
                 mask = weight_copy.gt(thresh).float()
-                
-                if int(torch.sum(mask)) < min_channel_num: 
+                #如果根据BN的权值得到保留层数少于需要保留的最小层数，则将BN weight 降序排列，取前面的min_channel_num个
+                if int(torch.sum(mask)) < min_channel_num:
                     _, sorted_index_weights = torch.sort(weight_copy,descending=True)
-                    mask[sorted_index_weights[:min_channel_num]]=1. 
+                    mask[sorted_index_weights[:min_channel_num]]=1.
                 remain = int(mask.sum())
+                #pruned 为剪枝掉的层个数
                 pruned = pruned + mask.shape[0] - remain
 
                 print(f'layer index: {idx:>3d} \t total channel: {mask.shape[0]:>4d} \t '
@@ -95,7 +106,9 @@ if __name__ == '__main__':
         return num_filters, filters_mask
 
     num_filters, filters_mask = obtain_filters_mask(model, thresh, CBL_idx, prune_idx)
+    # CBLidx2mask 为字典类型，层名：每层的mask，mask为0表示减掉，为1表示保留
     CBLidx2mask = {idx: mask for idx, mask in zip(CBL_idx, filters_mask)}
+    # CBLidx2filters 为字典类型，层名：每层保留的filter个数
     CBLidx2filters = {idx: filters for idx, filters in zip(CBL_idx, num_filters)}
 
     for i in model.module_defs:
@@ -108,6 +121,7 @@ if __name__ == '__main__':
 
 
     def prune_and_eval(model, CBL_idx, CBLidx2mask):
+        # 根据mask将对应的BN层gamma设置为0或者原值
         model_copy = deepcopy(model)
 
         for idx in CBL_idx:
@@ -123,7 +137,7 @@ if __name__ == '__main__':
 
     prune_and_eval(model, CBL_idx, CBLidx2mask)
 
-
+    ##将mask值转换成numpy格式
     for i in CBLidx2mask:
         CBLidx2mask[i] = CBLidx2mask[i].clone().cpu().numpy()
 
@@ -140,6 +154,7 @@ if __name__ == '__main__':
             i.pop('is_access')
 
     compact_module_defs = deepcopy(model.module_defs)
+    # 将compact_module_defs模型的卷积参数量设为剪枝后的数量
     for idx in CBL_idx:
         assert compact_module_defs[idx]['type'] == 'convolutional'
         compact_module_defs[idx]['filters'] = str(CBLidx2filters[idx])
@@ -193,4 +208,3 @@ if __name__ == '__main__':
         compact_model_name = compact_model_name.replace('.pt', '.weights')
     save_weights(compact_model, path=compact_model_name)
     print(f'Compact model has been saved: {compact_model_name}')
-

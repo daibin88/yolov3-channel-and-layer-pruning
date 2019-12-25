@@ -115,7 +115,8 @@ def parse_module_defs4(module_defs):
 
 
 def gather_bn_weights(module_list, prune_idx):
-
+    #获取BN层的gamma参数
+    #size_list 将idx对应的每一层bn权重个数组成一个列表
     size_list = [module_list[idx][1].weight.data.shape[0] for idx in prune_idx]
 
     bn_weights = torch.zeros(sum(size_list))
@@ -123,7 +124,7 @@ def gather_bn_weights(module_list, prune_idx):
     for idx, size in zip(prune_idx, size_list):
         bn_weights[index:(index + size)] = module_list[idx][1].weight.data.abs().clone()
         index += size
-
+    ## 将prune_idx对应的BN层权重依次取出并取绝对值存放在bn_weights中
     return bn_weights
 
 
@@ -217,16 +218,19 @@ def get_input_mask(module_defs, idx, CBLidx2mask):
 def init_weights_from_loose_model(compact_model, loose_model, CBL_idx, Conv_idx, CBLidx2mask):
 
     for idx in CBL_idx:
+        ##compact_CBL为剪枝后的模型，loose_CBL为剪枝前的模型，含有参数
         compact_CBL = compact_model.module_list[idx]
         loose_CBL = loose_model.module_list[idx]
+        ## out_channel_idx为CBLidx2mask中为1的位置，并转换成list
         out_channel_idx = np.argwhere(CBLidx2mask[idx])[:, 0].tolist()
-
+        ##根据loose_bn和out_channel_idx将输出不为0的层权重存在compact_bn中
         compact_bn, loose_bn         = compact_CBL[1], loose_CBL[1]
         compact_bn.weight.data       = loose_bn.weight.data[out_channel_idx].clone()
         compact_bn.bias.data         = loose_bn.bias.data[out_channel_idx].clone()
         compact_bn.running_mean.data = loose_bn.running_mean.data[out_channel_idx].clone()
         compact_bn.running_var.data  = loose_bn.running_var.data[out_channel_idx].clone()
 
+        ##input_mask获得当前卷积的输入维度，并获取不为0的权重存在tmp中
         input_mask = get_input_mask(loose_model.module_defs, idx, CBLidx2mask)
         in_channel_idx = np.argwhere(input_mask)[:, 0].tolist()
         compact_conv, loose_conv = compact_CBL[0], loose_CBL[0]
@@ -381,22 +385,24 @@ def get_mask(model, prune_idx, shortcut_idx):
 
 
 def merge_mask(model, CBLidx2mask, CBLidx2filters):
-    for i in range(len(model.module_defs) - 1, -1, -1):
-        mtype = model.module_defs[i]['type']
-        if mtype == 'shortcut':
+    for i in range(len(model.module_defs) - 1, -1, -1): #逆序取model的每一层
+        mtype = model.module_defs[i]['type']  #获取每一层的类型
+        if mtype == 'shortcut':  #如果类型是shortcut，并且对应的参数is_access为ture,则跳过这个shortcut层
             if model.module_defs[i]['is_access']:
                 continue
 
             Merge_masks =  []
             layer_i = i
             while mtype == 'shortcut':
+                #将用于shortcut的所有包含BN的卷积层的mask全部取出存在Merge_masks中
                 model.module_defs[layer_i]['is_access'] = True
-
+                #如果该层是shortcut层，则上一层是convolutional层并且含有BN层，则将上一层中的mask
+                #如果该层是增加一个0维度保存到Merge_masks
                 if model.module_defs[layer_i-1]['type'] == 'convolutional':
                     bn = int(model.module_defs[layer_i-1]['batch_normalize'])
                     if bn:
                         Merge_masks.append(CBLidx2mask[layer_i-1].unsqueeze(0))
-
+                #下面的layer_i 变为与i层一起shortcut的层，eg：i=74，此处下面的layer_i=71，并获取71层的类型
                 layer_i = int(model.module_defs[layer_i]['from'])+layer_i
                 mtype = model.module_defs[layer_i]['type']
 
@@ -405,7 +411,8 @@ def merge_mask(model, CBLidx2mask, CBLidx2filters):
                     if bn:
                         Merge_masks.append(CBLidx2mask[layer_i].unsqueeze(0))
 
-
+            ## 当shortcut有多个含有BN层的卷积时，将Merge_masks按照0维拼接在一起，
+            ## eg 有5层，每层的维度是1024，即拼成5行，然后每行对应的列元素相加，这样保证融合后的维度还是1024
             if len(Merge_masks) > 1:
                 Merge_masks = torch.cat(Merge_masks, 0)
                 merge_mask = (torch.sum(Merge_masks, dim=0) > 0).float()
