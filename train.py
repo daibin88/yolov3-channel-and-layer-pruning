@@ -75,20 +75,23 @@ def train():
         print('Using multi-scale %g - %g' % (img_sz_min * 32, img_size))
 
     # Configure run
-    data_dict = parse_data_cfg(data)
-    train_path = data_dict['train']
-    nc = int(data_dict['classes'])  # number of classes
+    data_dict = parse_data_cfg(data) #将*.data文件内容取到data_dict字典中
+    train_path = data_dict['train'] #获取训练的数据
+    nc = int(data_dict['classes'])  # number of classes 类别数
 
     # Remove previous results
     for f in glob.glob('*_batch*.jpg') + glob.glob(results_file):
         os.remove(f)
 
-    # Initialize model
+    # Initialize model 根据cfg文件建立model
     model = Darknet(cfg, (img_size, img_size), arc=opt.arc).to(device)
     if t_cfg:
         t_model = Darknet(t_cfg, (img_size, img_size), arc=opt.arc).to(device)
 
     # Optimizer
+    # 根据类型名将参数分为两类，conv2d参数存在pg1中，其它参数存在pg0中
+    # pg0参数利用SGD进行优化
+    # pg1使用weight_decay进行优化
     pg0, pg1 = [], []  # optimizer parameter groups
     for k, v in dict(model.named_parameters()).items():
         if 'Conv2d.weight' in k:
@@ -437,10 +440,12 @@ def train():
 
         # Update best mAP
         fitness = results[2]  # mAP
+        ## 获得最好的map值
         if fitness > best_fitness:
             best_fitness = fitness
 
         # Save training results
+        # 保存模型，保存的内容未chkpt
         save = (not opt.nosave) or (final_epoch and not opt.evolve) or opt.prebias
         if save:
             with open(results_file, 'r') as f:
@@ -458,10 +463,12 @@ def train():
                 os.system('gsutil cp %s gs://%s' % (last, opt.bucket))  # upload to bucket
 
             # Save best checkpoint
+            # 保存map最好的模型
             if best_fitness == fitness:
                 torch.save(chkpt, best)
 
             # Save backup every 10 epochs (optional)
+            # 每10个epoch保存一次模型
             if epoch > 0 and epoch % 10 == 0:
                 torch.save(chkpt, wdir + 'backup%g.pt' % epoch)
 
@@ -522,7 +529,7 @@ if __name__ == '__main__':
     parser.add_argument('--adam', action='store_true', help='use adam optimizer')
     parser.add_argument('--var', type=float, help='debug variable')
     parser.add_argument('--sparsity-regularization', '-sr', dest='sr', action='store_true',
-                        help='train with channel sparsity regularization')
+                        help='train with channel sparsity regularization') ## -sr选中时进行稀疏训练
     parser.add_argument('--s', type=float, default=0.001, help='scale sparse rate')
     parser.add_argument('--prune', type=int, default=1, help='0:nomal prune 1:other prune ')
 

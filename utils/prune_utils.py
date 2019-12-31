@@ -150,7 +150,9 @@ class BNOptimizer():
     @staticmethod
     def updateBN(sr_flag, module_list, s, prune_idx, idx2mask=None):
         if sr_flag:
-
+            ## BV层进行稀疏化
+            ## torch.sign将小于0的数变为-1，大于0的数变为1
+            ## a=[2,3,-2] 则torch.sign(a)=[1,1,-1]
             for idx in prune_idx:
                 # Squential(Conv, BN, Lrelu)
                 bn_module = module_list[idx][1]

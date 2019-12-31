@@ -141,16 +141,16 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
     """ Compute the average precision, given the recall and precision curves.
     Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
     # Arguments
-        tp:    True positives (list).
-        conf:  Objectness value from 0-1 (list).
-        pred_cls: Predicted object classes (list).
-        target_cls: True object classes (list).
+        tp:    True positives (list). 阈值大于0.5的预测框
+        conf:  Objectness value from 0-1 (list). 物体预测的值
+        pred_cls: Predicted object classes (list). 预测的类别
+        target_cls: True object classes (list). 真值label
     # Returns
         The average precision as computed in py-faster-rcnn.
     """
 
     # Sort by objectness
-    i = np.argsort(-conf)
+    i = np.argsort(-conf) #降序排列，并获得对应的索引值
     tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
 
     # Find unique classes
@@ -159,9 +159,9 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
     # Create Precision-Recall curve and compute AP for each class
     ap, p, r = [], [], []
     for c in unique_classes:
-        i = pred_cls == c
-        n_gt = (target_cls == c).sum()  # Number of ground truth objects
-        n_p = i.sum()  # Number of predicted objects
+        i = pred_cls == c #预测值为0，1，...的情况，0表示label数值，eg c=0当pred_cls某个元素为0是，i为true
+        n_gt = (target_cls == c).sum()  # Number of ground truth objects 真值中某个类别的数量,sum只计算true的个数
+        n_p = i.sum()  # Number of predicted objects #预测值中某个类别的数量
 
         if n_p == 0 and n_gt == 0:
             continue
@@ -171,15 +171,17 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
             p.append(0)
         else:
             # Accumulate FPs and TPs
-            fpc = (1 - tp[i]).cumsum()
+            # fpc:负类预测成正类的数量
+            # tpc:正类预测为正类
+            fpc = (1 - tp[i]).cumsum() #cumsum（）表示累加和
             tpc = (tp[i]).cumsum()
 
             # Recall
-            recall = tpc / (n_gt + 1e-16)  # recall curve
+            recall = tpc / (n_gt + 1e-16)  # recall curve 召回
             r.append(recall[-1])
 
             # Precision
-            precision = tpc / (tpc + fpc)  # precision curve
+            precision = tpc / (tpc + fpc)  # precision curve 准确率
             p.append(precision[-1])
 
             # AP from recall-precision curve
@@ -197,7 +199,7 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
 
     # Compute F1 score (harmonic mean of precision and recall)
     p, r, ap = np.array(p), np.array(r), np.array(ap)
-    f1 = 2 * p * r / (p + r + 1e-16)
+    f1 = 2 * p * r / (p + r + 1e-16) #计算F1
 
     return p, r, ap, f1, unique_classes.astype('int32')
 

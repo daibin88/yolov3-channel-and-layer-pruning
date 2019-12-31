@@ -18,7 +18,7 @@ def test(cfg,
          nms_thres=0.5,
          save_json=False,
          model=None):
-    
+
     # Initialize/load model and set device
     if model is None:
         device = torch_utils.select_device(opt.device)
@@ -41,6 +41,7 @@ def test(cfg,
         verbose = False
 
     # Configure run
+    # 获得测试数据，包括类别数，test数据，label名字
     data = parse_data_cfg(data)
     nc = int(data['classes'])  # number of classes
     test_path = data['valid']  # path to test images
@@ -83,8 +84,8 @@ def test(cfg,
         # Statistics per image
         for si, pred in enumerate(output):
             labels = targets[targets[:, 0] == si, 1:]
-            nl = len(labels)
-            tcls = labels[:, 0].tolist() if nl else []  # target class
+            nl = len(labels) #label个数
+            tcls = labels[:, 0].tolist() if nl else []  # target class, label类别数
             seen += 1
 
             if pred is None:
@@ -114,13 +115,14 @@ def test(cfg,
             clip_coords(pred, (height, width))
 
             # Assign all predictions as incorrect
+            # 假设所有的correct都预测不对，设为0，当预测框和label框iou大于阈值值时，设为1
             correct = [0] * len(pred)
             if nl:
                 detected = []
-                tcls_tensor = labels[:, 0]
+                tcls_tensor = labels[:, 0] #所有label的类别
 
                 # target boxes
-                tbox = xywh2xyxy(labels[:, 1:5])
+                tbox = xywh2xyxy(labels[:, 1:5]) #label的框
                 tbox[:, [0, 2]] *= width
                 tbox[:, [1, 3]] *= height
 
@@ -132,12 +134,13 @@ def test(cfg,
                         break
 
                     # Continue if predicted class not among image classes
+                    # 如果预测的label和不在真值label中时，跳过这次循环
                     if pcls.item() not in tcls:
                         continue
 
                     # Best iou, index between pred and targets
                     m = (pcls == tcls_tensor).nonzero().view(-1)
-                    iou, bi = bbox_iou(pbox, tbox[m]).max(0)
+                    iou, bi = bbox_iou(pbox, tbox[m]).max(0) #计算iou
 
                     # If iou > threshold and class is correct mark as correct
                     if iou > iou_thres and m[bi] not in detected:  # and pcls == tcls[bi]:
@@ -151,8 +154,8 @@ def test(cfg,
     stats = [np.concatenate(x, 0) for x in list(zip(*stats))]  # to numpy
     if len(stats):
         p, r, ap, f1, ap_class = ap_per_class(*stats)
-        mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean()
-        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class
+        mp, mr, map, mf1 = p.mean(), r.mean(), ap.mean(), f1.mean() #计算所有类的评价map及其他指标
+        nt = np.bincount(stats[3].astype(np.int64), minlength=nc)  # number of targets per class 每类中类别的数量
     else:
         nt = torch.zeros(1)
 
