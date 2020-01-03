@@ -141,8 +141,9 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
     """ Compute the average precision, given the recall and precision curves.
     Source: https://github.com/rafaelpadilla/Object-Detection-Metrics.
     # Arguments
-        tp:    True positives (list). 阈值大于0.5的预测框
-        conf:  Objectness value from 0-1 (list). 物体预测的值
+        tp:    True positives (list). 为[0,1,0,1,...],1表示预测框与真值框iou大于0.5，与真值相同，
+                                                         0表示预测框与预测框iou小于0.5，与真值不用
+        conf:  Objectness value from 0-1 (list). 物体预测的置信度
         pred_cls: Predicted object classes (list). 预测的类别
         target_cls: True object classes (list). 真值label
     # Returns
@@ -150,10 +151,11 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
     """
 
     # Sort by objectness
-    i = np.argsort(-conf) #降序排列，并获得对应的索引值
-    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i]
+    i = np.argsort(-conf) #根据confidence进行降序排列，并获得对应的索引值
+    tp, conf, pred_cls = tp[i], conf[i], pred_cls[i] #根据索引值获得对应值，如tp=[1,1,0,0,0,0]
 
-    # Find unique classes
+
+    # Find unique classes,实际的label
     unique_classes = np.unique(target_cls)
 
     # Create Precision-Recall curve and compute AP for each class
@@ -173,10 +175,10 @@ def ap_per_class(tp, conf, pred_cls, target_cls):
             # Accumulate FPs and TPs
             # fpc:负类预测成正类的数量
             # tpc:正类预测为正类
-            fpc = (1 - tp[i]).cumsum() #cumsum（）表示累加和
-            tpc = (tp[i]).cumsum()
+            fpc = (1 - tp[i]).cumsum() #cumsum（）表示累加和，某个类别错误类别被预测为真值的累加和
+            tpc = (tp[i]).cumsum() #某个类别中预测值与真值相同的tp值累加和
 
-            # Recall
+            # Recall，预测值与真值相同的个数即为recall个个数，如i有19个true,则recall有19个
             recall = tpc / (n_gt + 1e-16)  # recall curve 召回
             r.append(recall[-1])
 
